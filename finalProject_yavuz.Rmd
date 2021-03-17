@@ -1,0 +1,269 @@
+---
+title: "finalProject_yavuz_karabiyik"
+author: "Yavuz Numan Karabiyik"
+date: "2/15/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(party)
+library(tree)
+library(caTools)
+library(dplyr)
+library(pROC)
+options(knitr.duplicate.label = "allow")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## Part One - Project Description
+
+The data is related with direct marketing campaigns of a Portuguese banking institution. The marketing campaigns were based on phone calls. Often, more than one contact to the same client was required, in order to access if the product (bank term deposit) would be (or not) subscribed. 
+
+There is dataset bank-full.csv with all examples, ordered by date (from May 2008 to November 2010).
+The classification goal is to predict if the client will subscribe a term deposit (variable y).
+
+ROC (Receiver Operating Characteristic) Curve is a way to visualize the performance of a binary classifier.
+
+TPR or True Positive Rate answers the question — When the actual classification is positive, how often does the classifier predict positive?
+FPR or False Positive Rate answers the qestion — When the actual classification is negative, how often does the classifier incorrectly predict positive?
+
+The questions that we want to answer is,
+
+  Can we predict loan status which is described as loanyes using other features considering age, job, martial, education, balance, housing, contact, loan, day, month, duration, campaign, pdays, previous, poutcome, and others? If yes, which classifier is the best fit for the case using ROC curve.
+
+## Part One -Loading and Prepare Data
+
+###1.a Reading Data
+```{r}
+bank_df<- read.csv("./bank-full.csv", sep = ";")
+```
+
+###1.b Label Decoding
+
+In simple terms, label encoding is the process of replacing the different levels of a categorical variable with dummy numbers. For instance, the variable loanyes has two levels, “yes” and “no”. These can be encoded to 1 and 0, respectively. 
+
+```{r}
+
+bank_df <- bank_df %>%
+  mutate(housing = ifelse(housing == "no",0,1))
+
+```
+###1.c One Hot Decoder
+
+In this technique, one-hot (dummy) encoding is applied to the features, creating a binary column for each category level and returning a sparse matrix. In each dummy variable, the label “1” will represent the existence of the level in the variable, while the label “0” will represent its non-existence.
+
+We will apply this technique to all the remaining categorical variables. The decoding comes from caret package, while the first line uses the dummyVars() function to create a full set of dummy variables. The dummyVars() method works on the categorical variables. It is to be noted that the first line contains the argument fullrank=T, which will create n-1 columns for a categorical variable with n unique levels.
+
+The second line uses the output of the dummyVars() function and transforms the dataset, dat, where all the categorical variables are encoded to numerical variables. The fourth line of code prints the structure of the resulting data, dat-transfored, which confirms that one-hot encoding is completed.
+
+```{r}
+
+dmy <-dummyVars("~ .", data = bank_df, fullRank = T)
+bank_df_transformed<- data.frame(predict(dmy, newdata = bank_df))
+
+bank_df_transformed<-na.omit(bank_df_transformed)
+  
+```
+
+###1.d Checking Data Types
+
+Using sapply method to see the data types of the column values. It is important because, models usually uses numeric values and it requries all data to be in same type. We can see that all the data is converted to numeric data type.
+
+```{r}
+bank_df_transformed<-na.omit(bank_df_transformed)
+sapply(bank_df_transformed, class)
+
+```
+###1.e Representing Binary Features
+
+In order to represent the features in graph, it is better to categorize them with their value type considering if they are binary values or not. I have visualize the binary features with their percentages, so we can see what are the percentages of the customer's job, their martial status, education and so on.
+
+We can see some binary features,
+%22 of the customers have a blue collar job
+%3 of the customers are entrepreneur
+%5 of the customers are retired
+%21 of the customers are manager
+%2 of the customers are student
+%60 of the customers are married
+%51 of the customers have secondary degree
+%29 of the customers have tertiary
+%56 of the customers have house
+
+
+```{r}
+
+binary_features <- data.frame(
+  binary_columns = factor(c(
+    "$jobblue.collar",
+    "$jobentrepreneur",
+    "$jobretired",
+    "$jobmanagement",
+    "$jobstudent",
+    "$maritalmarried",
+    "$educationsecondary",
+    "$educationtertiary",
+    "$housing"),
+  levels = c(
+    "$jobblue.collar",
+    "$jobentrepreneur",
+    "$jobretired",
+    "$jobmanagement",
+    "$jobstudent",
+    "$maritalmarried",
+    "$educationsecondary",
+    "$educationtertiary",
+    "$housing")),
+  percantage = c(
+    mean(bank_df_transformed$jobblue.collar)*100,
+    mean(bank_df_transformed$jobentrepreneur)*100,
+    mean(bank_df_transformed$jobretired*100),
+    mean(bank_df_transformed$jobmanagement*100),
+    mean(bank_df_transformed$jobstudent*100),
+    mean(bank_df_transformed$maritalmarried*100),
+    mean(bank_df_transformed$educationsecondary*100),
+    mean(bank_df_transformed$educationtertiary*100),
+    mean(bank_df_transformed$housing*100)
+  ))
+
+
+b1 <- ggplot(data = binary_features, aes(x = binary_columns, y = percantage, fill = binary_columns)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label= round(percantage)), vjust=-0.3, color="black", size=3.5) +
+  theme(axis.text.x = element_text(angle = 90)) 
+
+b1
+
+
+
+```
+###1.f Representing Non-Binary Features
+
+I have checked for missing values, but did not go into further pre -processing of data since my objective is to demonstrate ROC curves here and not model fine tuning.There are no missing values. We can find more details about the column stats using summary function for non-binary features.
+
+```{r}
+
+summary(bank_df_transformed[c("age", "balance")])
+
+dfs<- stack(bank_df_transformed)
+dfs<- filter(dfs, ind == "age")
+ggplot(dfs, aes(x=values)) + geom_density()
+
+dfs<- stack(bank_df_transformed)
+dfs<- filter(dfs, ind == "balance")
+ggplot(dfs, aes(x=values)) + geom_density() + xlim(-5000,5000)
+
+```
+## Part Two - Splitting Data
+
+The train-test split procedure is used to estimate the performance of machine learning algorithms when they are used to make predictions on data not used to train the model.
+
+It is a fast and easy procedure to perform, the results of which allow you to compare the performance of machine learning algorithms for your predictive modeling problem. Although simple to use and interpret, there are times when the procedure should not be used, such as when you have a small dataset and situations where additional configuration is required, such as when it is used for classification and the dataset is not balanced.
+
+Train Dataset: Used to fit the machine learning model.
+Test Dataset: Used to evaluate the fit machine learning model.
+
+###2.a Splittig data to train and test data set
+
+We can see that 33908 examples (75 percent) were allocated to the training set and 11303 examples (25 percent) were allocated to the test set, as we specified.
+
+```{r}
+
+sample = sample.split(bank_df_transformed, SplitRatio = .75)
+
+train = subset(bank_df_transformed, sample == TRUE)
+test = subset(bank_df_transformed, sample == FALSE)
+
+dim(train)
+dim(test)
+  
+```
+## Part Three - ROC
+
+ROC (Receiver Operating Characteristic) Curve is a way to visualize the performance of a binary classifier.
+
+TPR or True Positive Rate answers the question — When the actual classification is positive, how often does the classifier predict positive?
+FPR or False Positive Rate answers the qestion — When the actual classification is negative, how often does the classifier incorrectly predict positive?
+
+###3.a Logistic Regression
+
+The code below estimates a logistic regression model using the glm (generalized linear model) function. Since we gave our model a name (mylogit), R will not produce any output from our regression. In order to get the results we use the summary command.
+
+```{r}
+
+lr_fit <- glm(loanyes~., data = train, family = binomial())
+lr_predict <- predict(lr_fit, newdata = test, type = "response")
+
+summary(lr_fit)
+ 
+```
+
+###3.b Conditional Inference Trees
+
+The party package provides non-parametric regression trees for nominal, ordinal, numeric, censored, and multivariate responses, which is called Conditional Inference Trees.
+
+```{r}
+
+ct_fit<-ctree(loanyes~., data = train)
+ct_predict<- predict(ct_fit, newdata = test)
+ 
+```
+
+###3.c Decision Tree
+
+Decision tree is a type of supervised learning algorithm that can be used in both regression and classification problems. It works for both categorical and continuous input and output variables.
+
+```{r}
+
+tr_fit<-tree(loanyes~., data = train)
+tr_predict<- predict(tr_fit, newdata = test)
+
+summary(tr_fit)
+ 
+```
+
+###3.d Visualizing ROC Curve
+
+Now, if I plot this data on a graph, I will get a ROC curve. The ROC curve is the graph plotted with TPR on y-axis and FPR on x-axis for all possible threshold. Both TPR and FPR vary from 0 to 1. Therefore, a good classifier will have an arc/ curve and will be further away from the random classifier line.
+To quantify a good classifier from a bad one using a ROC curve, is done by AUC (Area under Curve). From the graph it is quite clear that a good classifier will have AUC higher than a bad classifier as the area under curve will be higher for the former.
+
+AUC is also visible making Conditional Inference Trees a slightly better than other classifiers Logistic Regression, and Decision Tree Classifier.
+```{r}
+
+lr_roc <- roc(test$loanyes ~ lr_predict,plot=TRUE,print.auc=TRUE,col="green",lwd =4,legacy.axes=TRUE,main="ROC Curves")
+ct_roc <- roc(test$loanyes ~ ct_predict,plot=TRUE,print.auc=TRUE,col="blue",lwd = 4,print.auc.y=0.4,legacy.axes=TRUE,add = TRUE)
+tr_roc <- roc(test$loanyes ~ tr_predict,plot=TRUE,print.auc=TRUE,col="red",lwd = 4,print.auc.y=0.3,legacy.axes=TRUE,add = TRUE)
+
+legend("bottomright",legend=c("Logistic Regression","CT", "Decision Tree"),col=c("green","blue", "red"),lwd=4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
